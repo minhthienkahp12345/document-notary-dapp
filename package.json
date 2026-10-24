@@ -10,6 +10,9 @@
     "test": "hardhat test"
   },
   "dependencies": {
+    "@x402/core": "^2.28.0",
+    "@x402/evm": "^2.28.0",
+    "@x402/svm": "^2.28.0",
     "kubo-rpc-client": "^5.0.1",
     "next": "^14.2.0",
     "react": "^18.3.0",
@@ -21,9 +24,13 @@
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
     "@openzeppelin/contracts": "^5.0.2",
+    "@types/mocha": "^10.0.0",
     "@types/node": "^20.0.0",
     "@types/react": "^18.3.0",
+    "autoprefixer": "^10.6.1",
     "hardhat": "^2.22.0",
+    "postcss": "^8.5.31",
+    "tailwindcss": "^3.4.19",
     "typescript": "^5.4.0"
   }
 }

@@ -1,29 +1,48 @@
 'use client';
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { calculateSHA256, uploadToIPFS } from '@/lib/cryptoAndIpfs';
-import { useWriteContract, useReadContract, useAccount } from 'wagmi';
-import { DocumentNotaryABI } from '@/config/abi';
-
+import { calculateSHA256, uploadToIPFS } from '../lib/cryptoAndIpfs';
+import { useWriteContract, useReadContract, useAccount, useConnect } from 'wagmi';
+import { injected } from 'wagmi/connectors';
+import { DocumentNotary__factory } from '../../typechain-types/factories/contracts/DocumentNotary__factory';
 const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS as `0x${string}`;
-
 export default function FileNotaryDropzone() {
   const { address, isConnected } = useAccount();
+  const { connect, isPending: isConnecting, error: connectError } = useConnect();
+  const [isMounted, setIsMounted] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [docHash, setDocHash] = useState<`0x${string}` | null>(null);
+  const [originalDocHash, setOriginalDocHash] = useState<`0x${string}` | null>(null);
   const [ipfsCid, setIpfsCid] = useState<string>('');
   const [status, setStatus] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
   // Hook đọc thông tin kiểm tra On-chain từ Smart Contract (Free Gas Read)
-  const { data: verifyData, refetch: checkVerification } = useReadContract({
+  const { data: verifyData, isPending: isVerificationPending, refetch: refetchVerification } = useReadContract({
     address: CONTRACT_ADDRESS,
-    abi: DocumentNotaryABI,
+    abi: DocumentNotary__factory.abi, // Sửa ở đây
     functionName: 'verifyDocument',
     args: docHash ? [docHash] : undefined,
     query: { enabled: !!docHash },
   });
+
+  useEffect(() => {
+    if (docHash) {
+      setStatus('Đã tính xong SHA-256! Đang kiểm tra trạng thái trên Blockchain...');
+    }
+  }, [docHash]);
+
+  useEffect(() => {
+    if (verifyData?.[0] && docHash) {
+      setOriginalDocHash(docHash);
+    }
+  }, [docHash, verifyData]);
+
 
   // Hook ghi giao dịch On-chain
   const { writeContractAsync } = useWriteContract();
@@ -40,17 +59,13 @@ export default function FileNotaryDropzone() {
       // 1. Băm SHA-256
       const hash = await calculateSHA256(selectedFile);
       setDocHash(hash);
-      setStatus('Đã tính xong SHA-256! Kiểm tra trạng thái trên Blockchain...');
-
-      // Re-trigger tra cứu contract
-      await checkVerification();
     } catch (err) {
       setStatus('Có lỗi xảy ra khi xử lý file.');
       console.error(err);
     } finally {
       setIsLoading(false);
     }
-  }, [checkVerification]);
+  }, []);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -66,15 +81,30 @@ export default function FileNotaryDropzone() {
       const cid = await uploadToIPFS(file);
       setIpfsCid(cid);
 
-      setStatus('2/2. Yêu cầu ký giao dịch công chứng On-chain via MetaMask...');
-      const tx = await writeContractAsync({
-        address: CONTRACT_ADDRESS,
-        abi: DocumentNotaryABI,
-        functionName: 'notarizeDocument',
-        args: [docHash, cid],
-      });
+      const isNewVersion = Boolean(originalDocHash && originalDocHash !== docHash);
+      setStatus(
+        isNewVersion
+          ? '2/2. Yêu cầu ký giao dịch cập nhật phiên bản via MetaMask...'
+          : '2/2. Yêu cầu ký giao dịch công chứng On-chain via MetaMask...'
+      );
+      const tx = isNewVersion && originalDocHash
+        ? await writeContractAsync({
+          address: CONTRACT_ADDRESS,
+          abi: DocumentNotary__factory.abi,
+          functionName: 'updateDocumentVersion',
+          args: [originalDocHash, docHash, cid],
+        })
+        : await writeContractAsync({
+          address: CONTRACT_ADDRESS,
+          abi: DocumentNotary__factory.abi,
+          functionName: 'notarizeDocument',
+          args: [docHash, cid],
+        });
 
-      setStatus(`Thành công! Mã giao dịch (TxHash): ${tx}`);
+      await refetchVerification();
+      setStatus(
+        `${isNewVersion ? 'Cập nhật phiên bản thành công' : 'Công chứng thành công'}! Mã giao dịch (TxHash): ${tx}`
+      );
     } catch (error: any) {
       setStatus(`Lỗi: ${error?.shortMessage || error.message}`);
     } finally {
@@ -88,14 +118,45 @@ export default function FileNotaryDropzone() {
         Xác thực & Công chứng Tài liệu Số
       </h2>
 
+      <div className="mb-4 flex items-center justify-between gap-3 rounded-lg bg-gray-100 p-3 text-sm dark:bg-gray-900">
+        {!isMounted ? (
+          <p className="text-gray-600 dark:text-gray-300">
+            Đang kiểm tra kết nối ví...
+          </p>
+        ) : isConnected ? (
+          <p className="truncate text-green-700 dark:text-green-400">
+            Đã kết nối: {address}
+          </p>
+        ) : (
+          <>
+            <p className="text-gray-600 dark:text-gray-300">
+              Hãy kết nối MetaMask để đăng ký công chứng.
+            </p>
+            <button
+              type="button"
+              onClick={() => connect({ connector: injected() })}
+              disabled={isConnecting}
+              className="shrink-0 rounded-lg bg-orange-500 px-4 py-2 font-semibold text-white transition-colors hover:bg-orange-600 disabled:opacity-50"
+            >
+              {isConnecting ? 'Đang kết nối...' : 'Kết nối MetaMask'}
+            </button>
+          </>
+        )}
+      </div>
+
+      {connectError && (
+        <p className="mb-4 text-sm text-red-600">
+          Không thể kết nối ví: {connectError.message}
+        </p>
+      )}
+
       {/* Vùng Drag and Drop UI */}
       <div
         {...getRootProps()}
-        className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
-          isDragActive
-            ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-            : 'border-gray-300 dark:border-gray-600 hover:border-blue-400'
-        }`}
+        className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${isDragActive
+          ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+          : 'border-gray-300 dark:border-gray-600 hover:border-blue-400'
+          }`}
       >
         <input {...getInputProps()} />
         {file ? (
@@ -117,12 +178,21 @@ export default function FileNotaryDropzone() {
             <p className="font-mono text-blue-600 dark:text-blue-400">{docHash}</p>
           </div>
 
+          {isVerificationPending && (
+            <div className="p-4 rounded-lg bg-blue-100 text-blue-800">
+              Đang kiểm tra tài liệu trên Blockchain...
+            </div>
+          )}
+
           {verifyData && (
-            <div className={`p-4 rounded-lg ${
-              verifyData[0] ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
-            }`}>
+            <div className={`p-4 rounded-lg ${verifyData[0] ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
+              }`}>
               <p className="font-bold">
-                Trạng thái On-chain: {verifyData[0] ? '✅ ĐÃ ĐƯỢC CÔNG CHỨNG (VALID)' : '⚠️ CHƯA CÓ TRÊN BLOCKCHAIN'}
+                Trạng thái On-chain: {verifyData[0]
+                  ? '✅ ĐÃ ĐƯỢC CÔNG CHỨNG (VALID)'
+                  : originalDocHash
+                    ? '⚠️ TÀI LIỆU ĐÃ BỊ THAY ĐỔI SO VỚI BẢN GỐC'
+                    : '⚠️ CHƯA CÓ TRÊN BLOCKCHAIN'}
               </p>
               {verifyData[0] && (
                 <div className="mt-2 text-xs space-y-1">
@@ -144,7 +214,11 @@ export default function FileNotaryDropzone() {
           disabled={isLoading || !isConnected}
           className="mt-6 w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg shadow disabled:opacity-50 transition-all"
         >
-          {isLoading ? 'Đang xử lý...' : 'Đăng ký Công chứng On-chain'}
+          {isLoading
+            ? 'Đang xử lý...'
+            : originalDocHash
+              ? 'Đăng ký phiên bản mới On-chain'
+              : 'Đăng ký Công chứng On-chain'}
         </button>
       )}
 

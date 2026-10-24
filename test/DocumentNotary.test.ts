@@ -1,7 +1,11 @@
 import { expect } from "chai";
-import { ethers } from "hardhat";
-import { DocumentNotary } from "../typechain-types";
-import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
+import hre from "hardhat";
+import "@nomicfoundation/hardhat-ethers";
+import "@nomicfoundation/hardhat-chai-matchers";
+import type { DocumentNotary } from "../typechain-types";
+import type { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
+
+const { ethers } = hre;
 
 describe("DocumentNotary Contract Unit Tests", function () {
   let notary: DocumentNotary;

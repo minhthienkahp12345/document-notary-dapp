@@ -1,18 +1,21 @@
-import FileNotaryDropzone from '@/components/FileNotaryDropzone';
+'use client';
 
-export default function HomePage() {
-  return (
-    <main className="min-h-screen bg-gray-50 dark:bg-gray-900 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-4xl mx-auto text-center mb-8">
-        <h1 className="text-4xl font-extrabold text-gray-900 dark:text-white tracking-tight">
-          Hệ thống Công chứng & Xác thực Tài liệu Số
-        </h1>
-        <p className="mt-3 text-lg text-gray-600 dark:text-gray-300">
-          Nền tảng lưu trữ lai phi tập trung kết hợp Blockchain Ethereum và IPFS
-        </p>
-      </div>
+import FileNotaryDropzone from '../components/FileNotaryDropzone';
 
-      <FileNotaryDropzone />
-    </main>
-  );
+export default function Home() {
+    return (
+        <div className="container mx-auto px-4">
+            <div className="text-center mb-8">
+                <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
+                    Hệ thống Công chứng & Xác thực Tài liệu Số
+                </h1>
+                <p className="text-sm text-gray-500 mt-2">
+                    Nền tảng lưu trữ phi tập trung kết hợp Blockchain Ethereum và IPFS
+                </p>
+            </div>
+
+            {/* Gọi giao diện kéo thả file vào đây */}
+            <FileNotaryDropzone />
+        </div>
+    );
 }

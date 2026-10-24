@@ -1,10 +1,3 @@
-import { create } from 'kubo-rpc-client';
-
-// Khởi tạo IPFS Client kết nối tới node IPFS RPC local hoặc RPC Gateway
-const ipfsClient = create({
-  url: process.env.NEXT_PUBLIC_IPFS_RPC_URL || 'http://127.0.0.1:5001/api/v0',
-});
-
 /**
  * Tính mã băm SHA-256 của File nguyên bản ngay tại Client RAM
  * @param file Tập tin do người dùng nạp vào
@@ -27,13 +20,30 @@ export async function calculateSHA256(file: File): Promise<`0x${string}`> {
  */
 export async function uploadToIPFS(file: File): Promise<string> {
   try {
-    const arrayBuffer = await file.arrayBuffer();
-    const content = new Uint8Array(arrayBuffer);
+    const formData = new FormData();
+    formData.append('file', file, file.name);
 
-    const result = await ipfsClient.add(content);
-    return result.cid.toString();
+    const response = await fetch('/api/ipfs/add', {
+      method: 'POST',
+      body: formData,
+    });
+
+    const result = await response.json();
+    if (!response.ok || !result.cid) {
+      throw new Error(result.error || `IPFS trả về HTTP ${response.status}.`);
+    }
+
+    return result.cid;
   } catch (error) {
     console.error('Lỗi khi tải tập tin lên IPFS:', error);
-    throw new Error('Không thể tải tập tin lên mạng IPFS.');
+    const message = error instanceof Error ? error.message : '';
+    if (message.includes('403') || message.toLowerCase().includes('forbidden')) {
+      throw new Error(
+        'IPFS từ chối yêu cầu (403). Hãy bật CORS cho http://localhost:3000 trên IPFS rồi khởi động lại IPFS.'
+      );
+    }
+    throw new Error(
+      `Không thể kết nối IPFS. Hãy kiểm tra IPFS đang chạy tại http://127.0.0.1:5001. ${message}`
+    );
   }
 }
