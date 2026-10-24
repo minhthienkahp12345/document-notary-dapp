@@ -60,7 +60,7 @@ document-notary-dapp/
 1. **Clone the repository:**
 
 ```
-git clone https://github.com/<your-github-username>/document-notary-dapp.git
+git clone https://github.com/minhthienkahp12345/document-notary-dapp.git
 cd document-notary-dapp
 ```
 2. **Install all dependencies:**
