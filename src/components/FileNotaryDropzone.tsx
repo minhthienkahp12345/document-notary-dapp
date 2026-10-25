@@ -3,10 +3,19 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { calculateSHA256, uploadToIPFS } from '../lib/cryptoAndIpfs';
-import { useWriteContract, useReadContract, useAccount, useConnect } from 'wagmi';
+import { useWriteContract, useReadContract, useAccount, useConnect, usePublicClient } from 'wagmi';
 import { injected } from 'wagmi/connectors';
 import { DocumentNotary__factory } from '../../typechain-types/factories/contracts/DocumentNotary__factory';
 const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS as `0x${string}`;
+const IPFS_GATEWAY_URL =
+  process.env.NEXT_PUBLIC_IPFS_GATEWAY_URL || 'http://127.0.0.1:8080/ipfs';
+type NotarizationResult = {
+  blockNumber: bigint;
+  transactionHash: `0x${string}`;
+  timestamp: number;
+  cid: string;
+};
+
 export default function FileNotaryDropzone() {
   const { address, isConnected } = useAccount();
   const { connect, isPending: isConnecting, error: connectError } = useConnect();
@@ -17,6 +26,9 @@ export default function FileNotaryDropzone() {
   const [ipfsCid, setIpfsCid] = useState<string>('');
   const [status, setStatus] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [notarizationResult, setNotarizationResult] =
+    useState<NotarizationResult | null>(null);
+  const publicClient = usePublicClient();
 
   useEffect(() => {
     setIsMounted(true);
@@ -77,6 +89,7 @@ export default function FileNotaryDropzone() {
     if (!file || !docHash || !isConnected) return;
     try {
       setIsLoading(true);
+      setNotarizationResult(null);
       setStatus('1/2. Đang tải tập tin lên IPFS...');
       const cid = await uploadToIPFS(file);
       setIpfsCid(cid);
@@ -101,9 +114,22 @@ export default function FileNotaryDropzone() {
           args: [docHash, cid],
         });
 
+      if (!publicClient) {
+        throw new Error('Không thể kết nối blockchain để xác nhận giao dịch.');
+      }
+
+      setStatus('Đang chờ giao dịch được ghi vào block...');
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: tx });
+      const block = await publicClient.getBlock({ blockNumber: receipt.blockNumber });
+      setNotarizationResult({
+        blockNumber: receipt.blockNumber,
+        transactionHash: receipt.transactionHash,
+        timestamp: Number(block.timestamp),
+        cid,
+      });
       await refetchVerification();
       setStatus(
-        `${isNewVersion ? 'Cập nhật phiên bản thành công' : 'Công chứng thành công'}! Mã giao dịch (TxHash): ${tx}`
+        isNewVersion ? 'Cập nhật phiên bản thành công!' : 'Công chứng thành công!'
       );
     } catch (error: any) {
       setStatus(`Lỗi: ${error?.shortMessage || error.message}`);
@@ -198,10 +224,70 @@ export default function FileNotaryDropzone() {
                 <div className="mt-2 text-xs space-y-1">
                   <p><strong>Owner:</strong> {verifyData[3]}</p>
                   <p><strong>Phiên bản hiện tại:</strong> v{verifyData[4].toString()}</p>
-                  <p><strong>IPFS CID:</strong> {verifyData[1]}</p>
+                  <p className="break-all">
+                    <strong>IPFS CID:</strong>{' '}
+                    <a
+                      href={`${IPFS_GATEWAY_URL}/${verifyData[1]}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-blue-600 underline"
+                    >
+                      {verifyData[1]}
+                    </a>
+                  </p>
                   <p><strong>Thời gian:</strong> {new Date(Number(verifyData[2]) * 1000).toLocaleString()}</p>
                 </div>
               )}
+            </div>
+          )}
+
+          {ipfsCid && (
+            <div className="rounded-lg bg-green-100 p-4 text-sm text-green-800">
+              <p className="font-bold">Đã thêm file vào IPFS local.</p>
+              <p className="mt-1 break-all">
+                CID:{' '}
+                <a
+                  href={`${IPFS_GATEWAY_URL}/${ipfsCid}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-blue-700 underline"
+                >
+                  {ipfsCid}
+                </a>
+              </p>
+              <p className="mt-1 text-xs">
+                Nếu dùng Kubo local, link này cần IPFS Desktop/Kubo đang chạy.
+              </p>
+            </div>
+          )}
+
+          {notarizationResult && (
+            <div className="rounded-lg bg-blue-100 p-4 text-sm text-blue-900">
+              <p className="font-bold">Thông tin công chứng On-chain</p>
+              <div className="mt-2 space-y-1">
+                <p>
+                  <strong>Số Block:</strong> {notarizationResult.blockNumber.toString()}
+                </p>
+                <p className="break-all">
+                  <strong>Transaction Hash:</strong>{' '}
+                  <span className="font-mono">{notarizationResult.transactionHash}</span>
+                </p>
+                <p className="break-all">
+                  <strong>Liên kết IPFS:</strong>{' '}
+                  <a
+                    href={`${IPFS_GATEWAY_URL}/${notarizationResult.cid}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-blue-700 underline"
+                  >
+                    {notarizationResult.cid}
+                  </a>
+                </p>
+                <p>
+                  <strong>Ngày giờ công chứng:</strong>{' '}
+                  {new Date(notarizationResult.timestamp * 1000).toLocaleString()}
+                </p>
+              </div>
             </div>
           )}
         </div>

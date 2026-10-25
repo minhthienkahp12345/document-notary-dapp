@@ -78,6 +78,7 @@ Create `.env.local` in the project root:
 ```env
 NEXT_PUBLIC_CONTRACT_ADDRESS=
 NEXT_PUBLIC_IPFS_RPC_URL=http://127.0.0.1:5001/api/v0
+NEXT_PUBLIC_IPFS_GATEWAY_URL=http://127.0.0.1:8080/ipfs
 ```
 
 `.env.local` is ignored by Git and must be created separately on each computer.
@@ -136,6 +137,13 @@ ipfs daemon
 ```
 
 The app uploads through the Next.js `/api/ipfs/add` route, so the browser does not need direct IPFS CORS access. The IPFS API must be available at `http://127.0.0.1:5001`.
+
+The returned CID is pinned on your local Kubo node. Open it with the local gateway at
+`http://127.0.0.1:8080/ipfs/<CID>`. A local upload is not automatically available from
+the public `https://ipfs.io` gateway. To make a document publicly retrievable, pin it
+through a pinning service (such as Pinata or web3.storage), or keep your node online and
+connected to the IPFS network. Never expose a pinning-service API token in
+`NEXT_PUBLIC_*` variables; add that integration on the server side.
 
 2. **Launch the development server** in a fourth terminal:
 

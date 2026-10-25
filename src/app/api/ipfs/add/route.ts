@@ -15,10 +15,12 @@ export async function POST(request: Request) {
     const ipfsFormData = new FormData();
     ipfsFormData.append('file', file, file.name);
 
-    const ipfsUrl =
+    const ipfsApiUrl = (
+      process.env.IPFS_RPC_URL ||
       process.env.NEXT_PUBLIC_IPFS_RPC_URL ||
-      'http://127.0.0.1:5001/api/v0';
-    const response = await fetch(`${ipfsUrl}/add`, {
+      'http://127.0.0.1:5001/api/v0'
+    ).replace(/\/+$/, '');
+    const response = await fetch(`${ipfsApiUrl}/add?pin=true`, {
       method: 'POST',
       body: ipfsFormData,
     });
@@ -31,7 +33,23 @@ export async function POST(request: Request) {
       );
     }
 
-    const result = JSON.parse(responseText);
+    let result: { Hash?: unknown };
+    try {
+      result = JSON.parse(responseText);
+    } catch {
+      return NextResponse.json(
+        { error: `IPFS trả về dữ liệu không hợp lệ: ${responseText}` },
+        { status: 502 }
+      );
+    }
+
+    if (typeof result.Hash !== 'string' || result.Hash.length === 0) {
+      return NextResponse.json(
+        { error: 'IPFS không trả về CID cho tập tin đã tải lên.' },
+        { status: 502 }
+      );
+    }
+
     return NextResponse.json({ cid: result.Hash });
   } catch (error) {
     console.error('Lỗi API upload IPFS:', error);
