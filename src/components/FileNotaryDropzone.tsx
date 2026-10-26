@@ -3,10 +3,19 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { calculateSHA256, uploadToIPFS } from '../lib/cryptoAndIpfs';
-import { useWriteContract, useReadContract, useAccount, useConnect } from 'wagmi';
+import { useWriteContract, useReadContract, useAccount, useConnect, usePublicClient } from 'wagmi';
 import { injected } from 'wagmi/connectors';
 import { DocumentNotary__factory } from '../../typechain-types/factories/contracts/DocumentNotary__factory';
 const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS as `0x${string}`;
+const IPFS_GATEWAY_URL =
+  process.env.NEXT_PUBLIC_IPFS_GATEWAY_URL || 'http://127.0.0.1:8080/ipfs';
+type NotarizationResult = {
+  blockNumber: bigint;
+  transactionHash: `0x${string}`;
+  timestamp: number;
+  cid: string;
+};
+
 export default function FileNotaryDropzone() {
   const { address, isConnected } = useAccount();
   const { connect, isPending: isConnecting, error: connectError } = useConnect();
@@ -18,13 +27,10 @@ export default function FileNotaryDropzone() {
   const [ipfsCid, setIpfsCid] = useState<string>('');
   const [status, setStatus] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
-<<<<<<< Updated upstream
-=======
   const [isVerificationRequested, setIsVerificationRequested] = useState(false);
   const [notarizationResult, setNotarizationResult] =
     useState<NotarizationResult | null>(null);
   const publicClient = usePublicClient();
->>>>>>> Stashed changes
 
   useEffect(() => {
     setIsMounted(true);
@@ -203,8 +209,6 @@ export default function FileNotaryDropzone() {
           })
       );
 
-<<<<<<< Updated upstream
-=======
       let nonce = await publicClient.getTransactionCount({
         address,
         blockTag: 'pending',
@@ -238,7 +242,6 @@ export default function FileNotaryDropzone() {
         setOriginalFileName(file.name);
       }
       setIsVerificationRequested(true);
->>>>>>> Stashed changes
       await refetchVerification();
       setStatus(
         `${isNewVersion ? 'Cập nhật phiên bản thành công' : 'Công chứng thành công'}! Mã giao dịch (TxHash): ${tx}`
@@ -362,6 +365,24 @@ export default function FileNotaryDropzone() {
                     ? '⚠️ TÀI LIỆU ĐÃ BỊ THAY ĐỔI SO VỚI BẢN GỐC'
                     : '⚠️ CHƯA CÓ TRÊN BLOCKCHAIN'}
               </p>
+              {verifyData[0] && docHash && (
+                <div className="mt-3 space-y-2 rounded-lg bg-green-50 p-3 text-xs text-green-950">
+                  <p className="font-semibold">
+                    Kết quả so sánh mã hash: khớp
+                  </p>
+                  <p className="break-all">
+                    <strong>Hash đã ghi nhận trên Blockchain:</strong>{' '}
+                    <span className="font-mono">{docHash}</span>
+                  </p>
+                  <p className="break-all">
+                    <strong>Hash file đang kiểm tra:</strong>{' '}
+                    <span className="font-mono">{docHash}</span>
+                  </p>
+                  <p>
+                    Hai mã SHA-256 giống nhau, nội dung file khớp với bản đã công chứng.
+                  </p>
+                </div>
+              )}
               {isChangedVersion && originalDocHash && docHash && (
                 <div className="mt-3 space-y-2 rounded-lg bg-yellow-50 p-3 text-xs text-yellow-950">
                   <p className="font-semibold">
@@ -384,10 +405,58 @@ export default function FileNotaryDropzone() {
                 <div className="mt-2 text-xs space-y-1">
                   <p><strong>Owner:</strong> {verifyData[3]}</p>
                   <p><strong>Phiên bản hiện tại:</strong> v{verifyData[4].toString()}</p>
-                  <p><strong>IPFS CID:</strong> {verifyData[1]}</p>
+                  <p className="break-all">
+                    <strong>IPFS CID:</strong>{' '}
+                    <a
+                      href={`${IPFS_GATEWAY_URL}/${verifyData[1]}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-blue-600 underline"
+                    >
+                      {verifyData[1]}
+                    </a>
+                  </p>
                   <p><strong>Thời gian:</strong> {new Date(Number(verifyData[2]) * 1000).toLocaleString()}</p>
                 </div>
               )}
+            </div>
+          )}
+
+          {notarizationResult && (
+            <div className="rounded-lg bg-blue-100 p-4 text-sm text-blue-900">
+              <p className="font-bold">Chi tiết công chứng trên Blockchain</p>
+              <div className="mt-2 space-y-2">
+                <p className="break-all">
+                  <strong>SHA-256 Hash:</strong>{' '}
+                  <span className="font-mono">{docHash}</span>
+                </p>
+                <p className="text-xs text-blue-800">
+                  SHA-256 Hash là tiêu chí chính để phát hiện nội dung tài liệu có thay đổi.
+                </p>
+                <p className="break-all">
+                  <strong>Transaction Hash:</strong>{' '}
+                  <span className="font-mono">{notarizationResult.transactionHash}</span>
+                </p>
+                <p>
+                  <strong>Block Number:</strong>{' '}
+                  {notarizationResult.blockNumber.toString()}
+                </p>
+                <p>
+                  <strong>Timestamp:</strong>{' '}
+                  {new Date(notarizationResult.timestamp * 1000).toLocaleString()}
+                </p>
+                <p className="break-all">
+                  <strong>IPFS CID:</strong>{' '}
+                  <a
+                    href={`${IPFS_GATEWAY_URL}/${notarizationResult.cid}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-blue-700 underline"
+                  >
+                    {notarizationResult.cid}
+                  </a>
+                </p>
+              </div>
             </div>
           )}
         </div>
