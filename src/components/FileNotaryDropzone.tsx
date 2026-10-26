@@ -14,9 +14,17 @@ export default function FileNotaryDropzone() {
   const [file, setFile] = useState<File | null>(null);
   const [docHash, setDocHash] = useState<`0x${string}` | null>(null);
   const [originalDocHash, setOriginalDocHash] = useState<`0x${string}` | null>(null);
+  const [originalFileName, setOriginalFileName] = useState<string | null>(null);
   const [ipfsCid, setIpfsCid] = useState<string>('');
   const [status, setStatus] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
+<<<<<<< Updated upstream
+=======
+  const [isVerificationRequested, setIsVerificationRequested] = useState(false);
+  const [notarizationResult, setNotarizationResult] =
+    useState<NotarizationResult | null>(null);
+  const publicClient = usePublicClient();
+>>>>>>> Stashed changes
 
   useEffect(() => {
     setIsMounted(true);
@@ -28,30 +36,115 @@ export default function FileNotaryDropzone() {
     abi: DocumentNotary__factory.abi, // Sửa ở đây
     functionName: 'verifyDocument',
     args: docHash ? [docHash] : undefined,
-    query: { enabled: !!docHash },
+    query: { enabled: !!docHash && isVerificationRequested },
   });
-
-  useEffect(() => {
-    if (docHash) {
-      setStatus('Đã tính xong SHA-256! Đang kiểm tra trạng thái trên Blockchain...');
-    }
-  }, [docHash]);
-
-  useEffect(() => {
-    if (verifyData?.[0] && docHash) {
-      setOriginalDocHash(docHash);
-    }
-  }, [docHash, verifyData]);
-
 
   // Hook ghi giao dịch On-chain
   const { writeContractAsync } = useWriteContract();
+
+  const isNonceError = (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    return /nonce too low|nonce has already been used/i.test(message);
+  };
+
+  // A new hash alone cannot identify its source document. The file name keeps
+  // the current session's version flow separate from a completely new file.
+  const isChangedVersion = Boolean(
+    file &&
+    originalDocHash &&
+    originalFileName === file.name &&
+    originalDocHash !== docHash
+  );
+
+  const loadNotarizationResult = async (hash: `0x${string}`) => {
+    if (!publicClient) {
+      throw new Error('Không thể kết nối blockchain để tải thông tin công chứng.');
+    }
+
+    const notarizedLogs = await publicClient.getLogs({
+      address: CONTRACT_ADDRESS,
+      event: {
+        type: 'event',
+        name: 'DocumentNotarized',
+        inputs: [
+          { indexed: true, name: 'docHash', type: 'bytes32' },
+          { indexed: false, name: 'ipfsHash', type: 'string' },
+          { indexed: true, name: 'owner', type: 'address' },
+          { indexed: false, name: 'timestamp', type: 'uint256' },
+        ],
+      },
+      args: { docHash: hash },
+      fromBlock: 0n,
+      toBlock: 'latest',
+    });
+    const updatedLogs = await publicClient.getLogs({
+      address: CONTRACT_ADDRESS,
+      event: {
+        type: 'event',
+        name: 'DocumentUpdated',
+        inputs: [
+          { indexed: true, name: 'originalDocHash', type: 'bytes32' },
+          { indexed: true, name: 'newDocHash', type: 'bytes32' },
+          { indexed: false, name: 'newIpfsHash', type: 'string' },
+          { indexed: false, name: 'newVersion', type: 'uint256' },
+          { indexed: false, name: 'timestamp', type: 'uint256' },
+        ],
+      },
+      args: { newDocHash: hash },
+      fromBlock: 0n,
+      toBlock: 'latest',
+    });
+    const matches = [
+      ...notarizedLogs.map((log) => ({ log, cid: log.args.ipfsHash })),
+      ...updatedLogs.map((log) => ({ log, cid: log.args.newIpfsHash })),
+    ];
+    const match = matches
+      .sort((left, right) => Number(right.log.blockNumber - left.log.blockNumber))[0];
+
+    if (!match?.log.blockNumber || !match.log.transactionHash || !match.cid) {
+      throw new Error('Không tìm thấy giao dịch công chứng của tài liệu này.');
+    }
+
+    const block = await publicClient.getBlock({ blockNumber: match.log.blockNumber });
+
+    return {
+      blockNumber: match.log.blockNumber,
+      transactionHash: match.log.transactionHash,
+      timestamp: Number(block.timestamp),
+      cid: match.cid,
+    };
+  };
+
+  const handleVerify = async () => {
+    if (!docHash) return;
+    setIsVerificationRequested(true);
+    setIsLoading(true);
+    setNotarizationResult(null);
+    setStatus('Đang kiểm tra tài liệu trên Blockchain...');
+    try {
+      const result = await refetchVerification();
+      if (result.data?.[0]) {
+        setNotarizationResult(await loadNotarizationResult(docHash));
+        setStatus('Kiểm tra công chứng thành công.');
+      } else {
+        setStatus('Đã kiểm tra trạng thái công chứng.');
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus(`Lỗi: ${message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   // Xử lý khi người dùng thả file vào vùng Drag & Drop
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
     if (acceptedFiles.length === 0) return;
     const selectedFile = acceptedFiles[0];
     setFile(selectedFile);
+    setIsVerificationRequested(false);
+    setIpfsCid('');
+    setNotarizationResult(null);
     setIsLoading(true);
     setStatus('Đang tính toán mã băm SHA-256 tại trình duyệt...');
 
@@ -59,6 +152,7 @@ export default function FileNotaryDropzone() {
       // 1. Băm SHA-256
       const hash = await calculateSHA256(selectedFile);
       setDocHash(hash);
+      setStatus('');
     } catch (err) {
       setStatus('Có lỗi xảy ra khi xử lý file.');
       console.error(err);
@@ -74,39 +168,84 @@ export default function FileNotaryDropzone() {
 
   // Thực hiện công chứng tài liệu mới
   const handleNotarize = async () => {
-    if (!file || !docHash || !isConnected) return;
+    if (!file || !docHash || !isConnected || !address) return;
     try {
       setIsLoading(true);
       setStatus('1/2. Đang tải tập tin lên IPFS...');
       const cid = await uploadToIPFS(file);
       setIpfsCid(cid);
 
-      const isNewVersion = Boolean(originalDocHash && originalDocHash !== docHash);
+      if (!publicClient) {
+        throw new Error('Không thể kết nối blockchain để gửi giao dịch.');
+      }
+
+      const isNewVersion = isChangedVersion;
       setStatus(
         isNewVersion
           ? '2/2. Yêu cầu ký giao dịch cập nhật phiên bản via MetaMask...'
           : '2/2. Yêu cầu ký giao dịch công chứng On-chain via MetaMask...'
       );
-      const tx = isNewVersion && originalDocHash
-        ? await writeContractAsync({
-          address: CONTRACT_ADDRESS,
-          abi: DocumentNotary__factory.abi,
-          functionName: 'updateDocumentVersion',
-          args: [originalDocHash, docHash, cid],
-        })
-        : await writeContractAsync({
-          address: CONTRACT_ADDRESS,
-          abi: DocumentNotary__factory.abi,
-          functionName: 'notarizeDocument',
-          args: [docHash, cid],
-        });
+      const sendTransaction = (nonce: number) => (
+        isNewVersion && originalDocHash
+          ? writeContractAsync({
+            address: CONTRACT_ADDRESS,
+            abi: DocumentNotary__factory.abi,
+            functionName: 'updateDocumentVersion',
+            args: [originalDocHash, docHash, cid],
+            nonce,
+          })
+          : writeContractAsync({
+            address: CONTRACT_ADDRESS,
+            abi: DocumentNotary__factory.abi,
+            functionName: 'notarizeDocument',
+            args: [docHash, cid],
+            nonce,
+          })
+      );
 
+<<<<<<< Updated upstream
+=======
+      let nonce = await publicClient.getTransactionCount({
+        address,
+        blockTag: 'pending',
+      });
+      let tx: `0x${string}`;
+      try {
+        tx = await sendTransaction(nonce);
+      } catch (error) {
+        if (!isNonceError(error)) {
+          throw error;
+        }
+
+        nonce = await publicClient.getTransactionCount({
+          address,
+          blockTag: 'pending',
+        });
+        tx = await sendTransaction(nonce);
+      }
+
+      setStatus('Đang chờ giao dịch được ghi vào block...');
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: tx });
+      const block = await publicClient.getBlock({ blockNumber: receipt.blockNumber });
+      setNotarizationResult({
+        blockNumber: receipt.blockNumber,
+        transactionHash: receipt.transactionHash,
+        timestamp: Number(block.timestamp),
+        cid,
+      });
+      if (!isNewVersion) {
+        setOriginalDocHash(docHash);
+        setOriginalFileName(file.name);
+      }
+      setIsVerificationRequested(true);
+>>>>>>> Stashed changes
       await refetchVerification();
       setStatus(
         `${isNewVersion ? 'Cập nhật phiên bản thành công' : 'Công chứng thành công'}! Mã giao dịch (TxHash): ${tx}`
       );
-    } catch (error: any) {
-      setStatus(`Lỗi: ${error?.shortMessage || error.message}`);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus(`Lỗi: ${message}`);
     } finally {
       setIsLoading(false);
     }
@@ -170,6 +309,35 @@ export default function FileNotaryDropzone() {
         )}
       </div>
 
+      {docHash && (
+        <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+          <button
+            type="button"
+            onClick={handleVerify}
+            disabled={isLoading}
+            className="w-full rounded-lg bg-gray-600 px-4 py-3 font-semibold text-white transition-colors hover:bg-gray-700 disabled:opacity-50"
+          >
+            Kiểm tra tài liệu công chứng
+          </button>
+          <button
+            type="button"
+            onClick={handleNotarize}
+            disabled={
+              isLoading ||
+              !isConnected ||
+              (isVerificationRequested && !isVerificationPending && !!verifyData?.[0])
+            }
+            className="w-full rounded-lg bg-blue-600 px-4 py-3 font-semibold text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
+          >
+            {isLoading
+              ? 'Đang xử lý...'
+              : isChangedVersion
+                ? 'Công chứng phiên bản mới'
+                : 'Công chứng tài liệu mới'}
+          </button>
+        </div>
+      )}
+
       {/* Thông tin Mã băm & Kết quả On-chain */}
       {docHash && (
         <div className="mt-6 space-y-3 text-sm">
@@ -178,22 +346,40 @@ export default function FileNotaryDropzone() {
             <p className="font-mono text-blue-600 dark:text-blue-400">{docHash}</p>
           </div>
 
-          {isVerificationPending && (
+          {isVerificationRequested && isVerificationPending && (
             <div className="p-4 rounded-lg bg-blue-100 text-blue-800">
               Đang kiểm tra tài liệu trên Blockchain...
             </div>
           )}
 
-          {verifyData && (
+          {isVerificationRequested && !isVerificationPending && verifyData && (
             <div className={`p-4 rounded-lg ${verifyData[0] ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
               }`}>
               <p className="font-bold">
                 Trạng thái On-chain: {verifyData[0]
                   ? '✅ ĐÃ ĐƯỢC CÔNG CHỨNG (VALID)'
-                  : originalDocHash
+                  : isChangedVersion
                     ? '⚠️ TÀI LIỆU ĐÃ BỊ THAY ĐỔI SO VỚI BẢN GỐC'
                     : '⚠️ CHƯA CÓ TRÊN BLOCKCHAIN'}
               </p>
+              {isChangedVersion && originalDocHash && docHash && (
+                <div className="mt-3 space-y-2 rounded-lg bg-yellow-50 p-3 text-xs text-yellow-950">
+                  <p className="font-semibold">
+                    Kết quả so sánh mã hash: không khớp
+                  </p>
+                  <p className="break-all">
+                    <strong>Hash file gốc:</strong>{' '}
+                    <span className="font-mono">{originalDocHash}</span>
+                  </p>
+                  <p className="break-all">
+                    <strong>Hash file đang kiểm tra:</strong>{' '}
+                    <span className="font-mono">{docHash}</span>
+                  </p>
+                  <p>
+                    Nội dung file hiện tại khác file gốc nên mã SHA-256 đã thay đổi.
+                  </p>
+                </div>
+              )}
               {verifyData[0] && (
                 <div className="mt-2 text-xs space-y-1">
                   <p><strong>Owner:</strong> {verifyData[3]}</p>
@@ -205,21 +391,6 @@ export default function FileNotaryDropzone() {
             </div>
           )}
         </div>
-      )}
-
-      {/* Nút hành động Notarize */}
-      {docHash && verifyData && !verifyData[0] && (
-        <button
-          onClick={handleNotarize}
-          disabled={isLoading || !isConnected}
-          className="mt-6 w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg shadow disabled:opacity-50 transition-all"
-        >
-          {isLoading
-            ? 'Đang xử lý...'
-            : originalDocHash
-              ? 'Đăng ký phiên bản mới On-chain'
-              : 'Đăng ký Công chứng On-chain'}
-        </button>
       )}
 
       {/* Trạng thái Log */}
